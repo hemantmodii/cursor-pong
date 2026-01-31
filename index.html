@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cursor Pong XP</title>
+    <link rel="stylesheet" href="https://unpkg.com/xp.css">
+    <style>
+        body {
+            background: #008080; 
+            background-image: url('https://wallpapercave.com/wp/wp1851221.jpg');
+            background-size: cover;
+            overflow: hidden;
+            font-family: "Tahoma", sans-serif;
+            height: 100vh;
+            margin: 0;
+        }
+
+        #game-window {
+            position: absolute;
+            top: 150px; left: 150px;
+            width: 550px; height: 380px;
+            min-width: 320px; min-height: 280px;
+            background: black;
+            box-shadow: 5px 5px 25px rgba(0,0,0,0.6);
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .window-body {
+            flex-grow: 1;
+            padding: 0 !important;
+            margin: 0 !important;
+            position: relative;
+            background: black;
+            cursor: none;
+            overflow: hidden;
+            border: 2px inset #ffffff33;
+        }
+
+        #ball {
+            position: absolute;
+            width: 14px; height: 14px;
+            background: #fff;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #fff;
+        }
+
+        /* REVERTED: Classic Bar Paddles */
+        .paddle {
+            position: absolute;
+            width: 12px;
+            border: 1px solid #fff;
+        }
+        #player-paddle { 
+            background: #004ecc; /* XP Blue */
+            left: 15px; 
+        }
+        #bot-paddle { 
+            background: #cc0000; /* Red */
+            right: 15px; 
+        }
+
+        .score-board {
+            position: absolute;
+            top: 10px; width: 100%;
+            text-align: center; color: white;
+            font-size: 24px; font-weight: bold;
+            pointer-events: none; opacity: 0.4;
+            z-index: 5;
+        }
+
+        #settings-dialog, #game-over-dialog {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 350px; z-index: 100;
+            border: #004ecc 3px solid;
+            border-block: none;
+        }
+
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+<!-- SETUP DIALOG -->
+<div id="settings-dialog" class="window">
+    <div class="title-bar"><div class="title-bar-text">Cursor_Pong.exe Setup</div></div>
+    <div class="window-body" style="padding: 15px !important; cursor: default; background: #ece9d8;">
+        <p><b>Choose Cursor Class:</b></p>
+        <div class="field-row">
+            <input type="radio" name="size" value="large" id="c1" checked>
+            <label for="c1">Tank (Large Paddle / Slow Speed)</label>
+        </div>
+        <div class="field-row">
+            <input type="radio" name="size" value="small" id="c2">
+            <label for="c2">Scout (Small Paddle / Fast Speed)</label>
+        </div>
+
+        <p><b>Bot Difficulty:</b></p>
+        <select id="diff" style="width: 100%">
+            <option value="easy">Easy (Classic)</option>
+            <option value="medium">Medium (Moves Window)</option>
+            <option value="tough">Tough (Resizes Window)</option>
+        </select>
+
+        <p><b>Restrictions:</b></p>
+        <div class="field-row"><input type="checkbox" id="allow-move" checked><label for="allow-move">WASD to Move Window</label></div>
+        <div class="field-row"><input type="checkbox" id="allow-resize" checked><label for="allow-resize">Space+WASD to Resize</label></div>
+
+        <button id="start-btn" style="width: 100%; height: 35px; margin-top: 15px;">OK</button>
+    </div>
+</div>
+
+<!-- GAME OVER DIALOG -->
+<div id="game-over-dialog" class="window hidden">
+    <div class="title-bar"><div class="title-bar-text">Match Finished</div></div>
+    <div class="window-body" style="padding: 20px !important; text-align: center; background: #ece9d8;">
+        <h2 id="winner-text">YOU WIN!</h2>
+        <p>Final Score: <span id="final-score">0 - 0</span></p>
+        <button onclick="location.reload()" style="padding: 5px 20px;">Restart</button>
+    </div>
+</div>
+
+<div id="game-window" class="window hidden">
+    <div class="title-bar"><div class="title-bar-text">Cursor Pong</div></div>
+    <div class="window-body" id="game-area">
+        <div class="score-board"><span id="ps">0</span> - <span id="bs">0</span></div>
+        <div id="ball"></div>
+        <div id="player-paddle" class="paddle"></div>
+        <div id="bot-paddle" class="paddle"></div>
+    </div>
+</div>
+
+<script>
+const win = document.getElementById('game-window');
+const area = document.getElementById('game-area');
+const ballEl = document.getElementById('ball');
+const pPaddle = document.getElementById('player-paddle');
+const bPaddle = document.getElementById('bot-paddle');
+
+let gameRunning = false;
+let ball = { x: 0, y: 0, dx: 0, dy: 0, size: 14, speed: 5 };
+let player = { y: 100, score: 0, h: 80, speed: 0.1 };
+let bot = { y: 100, score: 0, h: 80, error: 0 };
+let lastWinX = 150, lastWinY = 150;
+let mousePos = { y: 150 };
+const keys = {};
+
+window.onkeydown = (e) => { keys[e.code] = true; if(e.code === 'Space') e.preventDefault(); };
+window.onkeyup = (e) => keys[e.code] = false;
+
+document.getElementById('start-btn').onclick = () => {
+    const s = document.querySelector('input[name="size"]:checked').value;
+    player.h = (s === 'large') ? 100 : 45;
+    bot.h = player.h;
+    player.speed = (s === 'large') ? 0.08 : 0.32;
+    
+    document.getElementById('settings-dialog').style.display = 'none';
+    win.classList.remove('hidden');
+    resetBall();
+    gameRunning = true;
+    requestAnimationFrame(gameLoop);
+};
+
+area.onmousemove = (e) => {
+    const rect = area.getBoundingClientRect();
+    mousePos.y = e.clientY - rect.top;
+};
+
+function resetBall() {
+    ball.x = area.clientWidth / 2;
+    ball.y = area.clientHeight / 2;
+    ball.speed = 5;
+    let angle = (Math.random() * 0.4) - 0.2; 
+    let dir = (Math.random() > 0.5 ? 1 : -1);
+    ball.dx = dir * ball.speed * Math.cos(angle);
+    ball.dy = ball.speed * Math.sin(angle);
+    bot.error = (Math.random() - 0.5) * 60; 
+}
+
+function handlePhysics(paddleY, paddleH, isPlayer) {
+    // Angular Deflection Math
+    let paddleCenter = paddleY + (paddleH / 2);
+    let intersectY = (ball.y + (ball.size / 2)) - paddleCenter;
+    let normalizedIntersect = intersectY / (paddleH / 2);
+    
+    let maxBounceAngle = (Math.PI / 3); // 60 deg
+    let bounceAngle = normalizedIntersect * maxBounceAngle;
+
+    ball.speed += 0.4; // Speed up
+    let direction = isPlayer ? 1 : -1;
+    ball.dx = direction * ball.speed * Math.cos(bounceAngle);
+    ball.dy = ball.speed * Math.sin(bounceAngle);
+
+    // Position fix
+    if(isPlayer) ball.x = 28;
+    else ball.x = area.clientWidth - 28 - ball.size;
+}
+
+function gameLoop() {
+    if(!gameRunning) return;
+
+    // 1. Keyboard Window Control
+    const isSpace = keys['Space'];
+    const moveSpd = 10, resizeSpd = 8;
+    if (isSpace && document.getElementById('allow-resize').checked) {
+        if (keys['KeyW'] || keys['ArrowUp']) win.style.height = (win.offsetHeight - resizeSpd) + 'px';
+        if (keys['KeyS'] || keys['ArrowDown']) win.style.height = (win.offsetHeight + resizeSpd) + 'px';
+        if (keys['KeyA'] || keys['ArrowLeft']) win.style.width = (win.offsetWidth - resizeSpd) + 'px';
+        if (keys['KeyD'] || keys['ArrowRight']) win.style.width = (win.offsetWidth + resizeSpd) + 'px';
+    } else if (document.getElementById('allow-move').checked) {
+        if (keys['KeyW'] || keys['ArrowUp']) win.style.top = (win.offsetTop - moveSpd) + 'px';
+        if (keys['KeyS'] || keys['ArrowDown']) win.style.top = (win.offsetTop + moveSpd) + 'px';
+        if (keys['KeyA'] || keys['ArrowLeft']) win.style.left = (win.offsetLeft - moveSpd) + 'px';
+        if (keys['KeyD'] || keys['ArrowRight']) win.style.left = (win.offsetLeft + moveSpd) + 'px';
+    }
+
+    // 2. Bot AI
+    let diff = document.getElementById('diff').value;
+    if (diff === 'easy') {
+        bot.y += (ball.y - bot.h/2 + bot.error - bot.y) * 0.06;
+        if(Math.random() > 0.99) bot.error = (Math.random() - 0.5) * 80;
+    } else {
+        bot.y += (ball.y - bot.h/2 - bot.y) * 0.12;
+        if (ball.dx > 0 && ball.x > area.clientWidth/2) {
+            win.style.left = (win.offsetLeft + (ball.dy * 1.5)) + 'px';
+        }
+        if (diff === 'tough') win.style.width = (win.offsetWidth + Math.sin(Date.now()/200)*6) + 'px';
+    }
+
+    // 3. Window Inertia (The "Flick" effect)
+    let winMovedY = win.offsetTop - lastWinY;
+    ball.y -= (win.offsetTop - lastWinY);
+    ball.x -= (win.offsetLeft - lastWinX);
+    lastWinX = win.offsetLeft; lastWinY = win.offsetTop;
+
+    // 4. Player Follow Cursor
+    player.y += (mousePos.y - player.y - player.h/2) * player.speed;
+
+    const h = area.clientHeight;
+    player.y = Math.max(0, Math.min(h - player.h, player.y));
+    bot.y = Math.max(0, Math.min(h - bot.h, bot.y));
+
+    pPaddle.style.top = player.y + 'px'; pPaddle.style.height = player.h + 'px';
+    bPaddle.style.top = bot.y + 'px'; bPaddle.style.height = bot.h + 'px';
+
+    // 5. Ball Physics
+    ball.x += ball.dx;
+    ball.y += ball.dy;
+
+    // Top/Bottom Bounces
+    if(ball.y <= 0 || ball.y >= h - ball.size) ball.dy *= -1;
+
+    // Scoring (Side Walls)
+    if(ball.x <= 0) { bot.score++; resetBall(); }
+    if(ball.x >= area.clientWidth - ball.size) { player.score++; resetBall(); }
+
+    // Paddle Collision Logic
+    // Player
+    if(ball.x <= 27 && ball.x > 10 && ball.y + ball.size > player.y && ball.y < player.y + player.h) {
+        handlePhysics(player.y, player.h, true);
+        ball.dy += winMovedY * 0.5; // Add window momentum
+    }
+    // Bot
+    if(ball.x >= area.clientWidth - 27 - ball.size && ball.x < area.clientWidth - 10 && ball.y + ball.size > bot.y && ball.y < bot.y + bot.h) {
+        handlePhysics(bot.y, bot.h, false);
+    }
+
+    // 6. Win Condition
+    if(player.score >= 10 || bot.score >= 10) {
+        gameRunning = false;
+        document.getElementById('winner-text').innerText = player.score >= 10 ? "YOU WIN!" : "BOT WINS!";
+        document.getElementById('final-score').innerText = player.score + " - " + bot.score;
+        document.getElementById('game-over-dialog').classList.remove('hidden');
+        win.classList.add('hidden');
+    }
+
+    ballEl.style.left = ball.x + 'px';
+    ballEl.style.top = ball.y + 'px';
+    document.getElementById('ps').innerText = player.score;
+    document.getElementById('bs').innerText = bot.score;
+
+    requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+</html>
